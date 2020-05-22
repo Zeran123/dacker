@@ -1,4 +1,4 @@
-# DDEP
+# Dacker
 
 这是一个用于构建有依赖关系的Docker镜像，例如有镜像A，B，C的构建脚本放在同一个Repo中，镜像C依赖镜像B，镜像B又依赖镜像A，那么当镜像A有变动时，会自动构建镜像B和镜像C，如果镜像B有变动，则只会重新构建镜像C。
 
@@ -33,7 +33,7 @@
 			"dockerfile": "./example/java/openjdk-11-jre-with-sidecar/dockerfile",
 			"image": "sidecar-java",
 			"tag": "openjdk-11-jre-${BuildNumber}",
-			"deps": ["ubuntu", "sidecar]
+			"deps": ["ubuntu", "sidecar"]
 		}
 ]
 ```
