@@ -2,15 +2,68 @@
 
 这是一个用于构建有依赖关系的Docker镜像，例如有镜像A，B，C的构建脚本放在同一个Repo中，镜像C依赖镜像B，镜像B又依赖镜像A，那么当镜像A有变动时，会自动构建镜像B和镜像C，如果镜像B有变动，则只会重新构建镜像C。
 
-## 用法 Usage
 
-1. 在repo中新建dacker.conf文件
 
-2. 执行命令：
+## 用法
+
+1. 在 Dockerfile 中，将依赖的镜像的名称修改为占位符。
+
+   占位符格式 `${镜像名称:Image|Tag}`，例如`${ubuntu:Image}`和`${ubuntu:Tag}`
+
+   ```dockerfile
+   ...
+   
+   FROM ubuntu:18.04
+   
+   ...
+   
+   ---- 修改后
+   
+   ...
+   
+   FROM ${ubuntu:Image}:${ubuntu:Tag}
+   
+   ...
+   # 构建过程中，对应的占位符会被替换为该镜像最新的名称和Tag
+   ```
+
+2. 在 repo的根目录中新建 dacker.conf 文件。
+
++ 配置文件结构
+
+```json
+[
+	{
+		"name": "镜像名称，唯一，用于依赖的引用",
+		"dockerfile": "Dockerfile文件的相对路径",
+		"image": "用于构建的镜像名称",
+		"tag": "镜像的标签，可用占位符${BuildNumber}",
+		"deps": ["依赖的镜像的名称"]
+	}
+]
+
+```
+
++ [配置文件样例参考](#想法)
+
+2. 执行命令
 
 ```shell
 > dacker [buildNumber]
 ```
+
+> 参数说明
+| 参数名称 | 类型 | 说明 | 样例 |
+|---|---|---|---|
+| buildNumber | 字符串 | 构建的版本号 | 20200525.1 |
+
+
+
+
+
+---
+
+
 
 ## 想法
 
@@ -18,33 +71,33 @@
 
 ```json
 [
-		{
-			"name": "ubuntu",
-			"dockerfile": "./example/ubuntu/dockerfile",
-			"image": "ubuntu",
-			"tag": "18.04-zh-${BuildNumber}"
-		},
-		{
-			"name": "sidecar",
-			"dockerfile": "./example/sidecar/dockerfile",
-			"image": "sidecar",
-			"tag": "u1804-${BuildNumber}",
-			"deps": ["ubuntu"]
-		},
-		{
-			"name": "openjdk-11-jre",
-			"dockerfile": "./example/java/openjdk-11-jre/dockerfile",
-			"image": "openjdk-11-jre",
-			"tag": "${BuildNumber}",
-			"deps": ["ubuntu"]
-		},
-		{
-			"name": "openjdk-11-jre-with-sidecar",
-			"dockerfile": "./example/java/openjdk-11-jre-with-sidecar/dockerfile",
-			"image": "sidecar-java",
-			"tag": "openjdk-11-jre-${BuildNumber}",
-			"deps": ["ubuntu", "sidecar"]
-		}
+	{
+		"name": "openjdk-11-jre-with-sidecar",
+		"dockerfile": "./example/java/openjdk-11-jre-with-sidecar/dockerfile",
+		"image": "example.com/sidecar-java",
+		"tag": "openjdk-11-jre-${BuildNumber}",
+		"deps": ["sidecar", "openjdk-11-jre"]
+	},
+	{
+		"name": "ubuntu",
+		"dockerfile": "./example/ubuntu:18.04-zh/dockerfile",
+		"image": "example.com/ubuntu",
+		"tag": "18.04-zh-${BuildNumber}"
+	},
+	{
+		"name": "sidecar",
+		"dockerfile": "./example/sidecar/dockerfile",
+		"image": "example.com/sidecar",
+		"tag": "u1804-${BuildNumber}",
+		"deps": ["ubuntu"]
+	},
+	{
+		"name": "openjdk-11-jre",
+		"dockerfile": "./example/java/openjdk-11-jre/dockerfile",
+		"image": "example.com/openjdk-11-jre",
+		"tag": "${BuildNumber}",
+		"deps": ["ubuntu"]
+	}
 ]
 ```
 
@@ -60,19 +113,19 @@
 [
 	{
 		"name": "ubuntu",
-		"hash": "xxxxx",
+		"hash": [{"文件名": "Hash值"}],
 		"buildNumber": "20200519.1",
 		"image": "ubuntu",
 		"tag": "18.04-zh-20200519.1",
-		"updatedAt": "2020-05-19 23:11:08"
+		"deps": [{"依赖的镜像名称": "镜像Tag"}]
 	},
 	{
 		"name": "sidecar",
-		"hash": "xxxxx",
+		"hash": [{"文件名": "Hash值"}],
 		"buildNumber": "20200519.1",
 		"image": "sidecar",
 		"tag": "u1804-20200520.1",
-		"updatedAt": "2020-05-19 23:11:08"
+		"deps": [{"依赖的镜像名称": "镜像Tag"}]
 	}
 ]
 ```
