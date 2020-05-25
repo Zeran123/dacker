@@ -1,33 +1,37 @@
 package main
 
 import (
-	"io/ioutil"
-	"fmt"
-	"log"
-	"encoding/json"
-	"os"
-	"os/exec"
-	"strings"
-	"regexp"
-	"path/filepath"
 	"bufio"
 	"crypto/md5"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
 )
 
-func main(){
+func main() {
 	// 第一个参数为BuildNumber
-	buildNumber := os. Args[1]
+	buildNumber := os.Args[1]
 	log.Printf("本次构建版本号：%s", buildNumber)
 	// 从dacker.config中读取镜像配置及依赖关系
 	log.Printf("加载配置文件")
-	
+
 	images := loadConfig()
 	names := sortByDeps(images)
+	for _, n := range names {
+		log.Printf("%s ", n)
+	}
+	log.Printf("共加载镜像 %d 个", len(names))
 
 	for _, name := range names {
 		log.Printf("==================================")
-		
-		image := images[name]	
+
+		image := images[name]
 		log.Printf("准备构建镜像 %s", name)
 		build, err := GetBuild(image.Name)
 		if err != nil {
@@ -39,20 +43,44 @@ func main(){
 			continue
 		}
 
-		dir := filepath.Dir(image.Dockerfile)
-		hashs, modified := hasModified(dir, build.Hash)
-		if !modified {
-			log.Printf("构建脚本没有变更，跳过构建")
-			continue;
-		}
-
 		dockerfile, err := ioutil.ReadFile(image.Dockerfile)
 		if err != nil {
 			log.Fatal("加载Dockerfile文件失败", err)
 			return
 		}
-		
-		newfileContent := replacePlaceholders(string(dockerfile))
+
+		/*
+			检查当前镜像的依赖的Tag是否有变动
+		*/
+		var depNames []string
+		depModified := false
+		p, v := getDependency(string(dockerfile))
+		/*
+			v 为当前镜像dockerfile中依赖的镜像名称和tag
+		*/
+		for n, t := range build.Deps {
+			if v[n] != t {
+				depNames = append(depNames, n+":"+t)
+				depModified = true
+			}
+		}
+
+		dir := filepath.Dir(image.Dockerfile)
+		hashs, modified := isModified(dir, build.Hash)
+		if depModified {
+			log.Printf("依赖镜像 ")
+			for _, n := range depNames {
+				log.Printf("%s ", n)
+			}
+			log.Printf("发生变更")
+		} else {
+			if !modified {
+				log.Printf("构建脚本没有变更，跳过构建")
+				continue
+			}
+		}
+
+		newfileContent := replacePlaceholders(string(dockerfile), p)
 		newfilePath := image.Dockerfile + "_active"
 
 		// 删除临时生成的dockerfile文件
@@ -70,11 +98,11 @@ func main(){
 
 		// 执行 docker build 构建命令
 		log.Printf("开始构建镜像 => %s:%s", imageName, tag)
-		cmd := exec.Command("sudo", "docker", "build", "-f", newfilePath, "-t", imageName + ":" + tag, dir)
+		cmd := exec.Command("sudo", "docker", "build", "-f", newfilePath, "-t", imageName+":"+tag, dir)
 		stdout, _ := cmd.StdoutPipe()
 		stderr, _ := cmd.StderrPipe()
 		oReader := bufio.NewReader(stdout)
-		eReader := bufio.NewReader(stderr)			
+		eReader := bufio.NewReader(stderr)
 		err = cmd.Start()
 
 		// 同步输出日志
@@ -96,7 +124,7 @@ func main(){
 				}
 			}
 		}()
-	
+
 		err = cmd.Wait()
 		if err != nil {
 			log.Fatal("构建脚本执行失败", err)
@@ -108,9 +136,13 @@ func main(){
 
 		build.Name = image.Name
 		build.BuildNumber = buildNumber
-		build.Image = imageName 
+		build.Image = imageName
 		build.Tag = tag
 		build.Hash = hashs
+		build.Deps = make(map[string]string)
+		for n, t := range v {
+			build.Deps[n] = t
+		}
 		_, err = build.SaveBuild()
 		if err != nil {
 			log.Fatal("保存构建结果失败", err)
@@ -118,12 +150,11 @@ func main(){
 			log.Printf("已保存 %s 的构建结果", build.Name)
 		}
 	}
-	
+
 }
 
-
 // 根据镜像的依赖关系计算构建优先级
-func sortByDeps(images map[string]Image)([]string){
+func sortByDeps(images map[string]Image) []string {
 	// 根据依赖计算出构建的优先级
 	var names []string
 	priority := make(map[string]int)
@@ -133,10 +164,10 @@ func sortByDeps(images map[string]Image)([]string){
 		for k := 0; k < len(deps); k++ {
 			dep := deps[k]
 			_, exists := priority[dep]
-			if(!exists){
+			if !exists {
 				priority[dep] = 1
 			} else {
-				priority[dep] = priority[dep] + 1	
+				priority[dep] = priority[dep] + 1
 			}
 		}
 	}
@@ -145,14 +176,54 @@ func sortByDeps(images map[string]Image)([]string){
 	// 构建镜像的顺序
 	l := len(names)
 	for i := 0; i < l; i++ {
-		for j := 0; j < l - 1 - i; j++ {
-			if priority[names[j]] < priority[names[j + 1]] {
-				names[j], names[j + 1] = names[j + 1], names[j]
+		for j := 0; j < l-1-i; j++ {
+			if priority[names[j]] < priority[names[j+1]] {
+				names[j], names[j+1] = names[j+1], names[j]
 			}
 		}
 	}
 
-	return names;
+	return names
+}
+
+//
+// 从dockerfile中解析依赖镜像的占位符
+// 返回两个结果：
+// 1. map[占位符]=实际的值
+// 2. map[依赖的镜像名]=依赖镜像的Tag
+//
+func getDependency(dockerfile string) (map[string]string, map[string]string) {
+	// 占位符
+	h := make(map[string]string)
+	// 镜像版本
+	v := make(map[string]string)
+	r, _ := regexp.Compile(`\$\{(\w|-)+\:(\w|-)+\}`)
+	placeholders := r.FindAllString(string(dockerfile), -1)
+	/*
+		解析dockerfile中的占位符${依赖镜像的Name:依赖镜像的Tag}
+		然后从当前构建的结果中获取依赖镜像的最新的Tag
+	*/
+	for _, placeholder := range placeholders {
+		arr := strings.Split(
+			strings.Replace(
+				strings.Replace(placeholder, "${", "", -1), "}", "", -1), ":")
+
+		name := arr[0]
+		build, err := GetBuild(name)
+		if err != nil {
+			log.Fatal("load build %s error", arr[0])
+		}
+		var field string
+		switch arr[1] {
+		case "Image":
+			field = build.Image
+		case "Tag":
+			field = build.Tag
+			v[name] = field
+		}
+		h[placeholder] = field
+	}
+	return h, v
 }
 
 //
@@ -160,45 +231,19 @@ func sortByDeps(images map[string]Image)([]string){
 // 占位符格式为：${镜像名:配置文件中的字段}
 // 例如：${ubuntu:Image}
 //
-func replacePlaceholders(dockerfile string) string {
-	r, err := regexp.Compile(`\$\{(\w|-)+\:(\w|-)+\}`)
-	if err != nil {
-		fmt.Printf("regex compile error")
-		return ""
-	}
+func replacePlaceholders(dockerfile string, p map[string]string) string {
 	// 查找Dockerfile中的占位符，并替换为实际的值
-	h := make(map[string]string)
-	placeholders := r.FindAllString(string(dockerfile), -1)
-	for _, placeholder := range placeholders {
-		arr := strings.Split(
-			strings.Replace(
-				strings.Replace(placeholder, "${", "", -1), "}", "", -1), ":")
-
-		build, err := GetBuild(arr[0])
-		if err != nil {
-			log.Fatal("load build %s error", arr[0])
-		}
-		var value string
-		switch arr[1] {
-		case "Image":
-			value = build.Image
-		case "Tag":
-			value = build.Tag
-		}
-		h[placeholder] = value
-	}
 	content := dockerfile
-	for k, v := range(h) {
+	for k, v := range p {
 		content = strings.Replace(content, k, v, -1)
 	}
 	return content
 }
 
-
 //
 // 检查镜像构建脚本及相关文件的内容是否有变动
 //
-func hasModified(dir string, existsHashs map[string]string) (map[string]string, bool) {
+func isModified(dir string, existsHashs map[string]string) (map[string]string, bool) {
 	// 计算构建脚本所在目录中所有文件的Hash值
 	log.Printf("准备计算构建脚本的哈希值 => %s", dir)
 	hashs := make(map[string]string)
@@ -230,15 +275,15 @@ func hasModified(dir string, existsHashs map[string]string) (map[string]string, 
 // 加载配置文件
 //
 func loadConfig() map[string]Image {
-	content, err := ioutil.ReadFile("./dacker.config")
+	content, err := ioutil.ReadFile("./dacker.conf")
 	if err != nil {
-			log.Fatal(err)
+		log.Fatal(err)
 	}
-	
+
 	var imagesArr []Image
 	err = json.Unmarshal(content, &imagesArr)
 	if err != nil {
-			log.Fatal(err)
+		log.Fatal(err)
 	}
 	imagesMap := make(map[string]Image)
 	for _, image := range imagesArr {
