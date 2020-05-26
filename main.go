@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/md5"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -15,8 +16,24 @@ import (
 )
 
 func main() {
+	push := false
+	buildNumber := ""
+	flag.BoolVar(&push, "push", true, "开启镜像推送")
+	flag.StringVar(&buildNumber, "v", "", "设置构建版本号")
+	flag.Parse()
+
+	if buildNumber == "" {
+		fmt.Printf("dacker是一个用于构建包含依赖关系的Docker镜像.\n")
+		fmt.Printf("\nUsage: \n")
+		fmt.Printf("\tdacker [arguments] build\n\n")
+		fmt.Printf("The arguments are:\n\n")
+		flag.PrintDefaults()
+		return
+	}
+
 	// 第一个参数为BuildNumber
-	buildNumber := os.Args[1]
+	// op := os.Args[1]
+
 	log.Printf("本次构建版本号：%s", buildNumber)
 	// 从dacker.config中读取镜像配置及依赖关系
 	log.Printf("加载配置文件")
@@ -98,38 +115,7 @@ func main() {
 
 		// 执行 docker build 构建命令
 		log.Printf("开始构建镜像 => %s:%s", imageName, tag)
-		cmd := exec.Command("sudo", "docker", "build", "-f", newfilePath, "-t", imageName+":"+tag, dir)
-		stdout, _ := cmd.StdoutPipe()
-		stderr, _ := cmd.StderrPipe()
-		oReader := bufio.NewReader(stdout)
-		eReader := bufio.NewReader(stderr)
-		err = cmd.Start()
-
-		// 同步输出日志
-		go func() {
-			for {
-				line, _ := oReader.ReadString('\n')
-				if line != "" {
-					log.Printf(line)
-				}
-			}
-		}()
-
-		// 同步输出错误
-		go func() {
-			for {
-				line, _ := eReader.ReadString('\n')
-				if line != "" {
-					log.Printf(line)
-				}
-			}
-		}()
-
-		err = cmd.Wait()
-		if err != nil {
-			log.Fatal("构建脚本执行失败", err)
-			return
-		}
+		call("sudo", "docker", "build", "-f", newfilePath, "-t", imageName+":"+tag, dir)
 
 		// 删除临时生成的dockerfile文件
 		os.RemoveAll(newfilePath)
@@ -148,9 +134,47 @@ func main() {
 			log.Fatal("保存构建结果失败", err)
 		} else {
 			log.Printf("已保存 %s 的构建结果", build.Name)
+			if push {
+				call("sudo", "docker", "push", imageName+":"+tag)
+			}
 		}
 	}
 
+}
+
+func call(name string, arg ...string) {
+	cmd := exec.Command(name, arg...)
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	oReader := bufio.NewReader(stdout)
+	eReader := bufio.NewReader(stderr)
+	err := cmd.Start()
+
+	// 同步输出日志
+	go func() {
+		for {
+			line, _ := oReader.ReadString('\n')
+			if line != "" {
+				log.Printf(line)
+			}
+		}
+	}()
+
+	// 同步输出错误
+	go func() {
+		for {
+			line, _ := eReader.ReadString('\n')
+			if line != "" {
+				log.Printf(line)
+			}
+		}
+	}()
+
+	err = cmd.Wait()
+	if err != nil {
+		log.Fatal("命令执行失败", err)
+		return
+	}
 }
 
 // 根据镜像的依赖关系计算构建优先级
