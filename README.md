@@ -49,7 +49,15 @@
 2. 执行命令
 
 ```shell
-> dacker [buildNumber]
+Usage:
+	dacker [arguments] build
+
+The arguments are:
+
+  -push
+    	开启镜像推送 (default true)
+  -v string
+    	设置构建版本号
 ```
 
 > 参数说明
