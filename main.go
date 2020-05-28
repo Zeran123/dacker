@@ -188,14 +188,15 @@ func doBuild() {
 func doRelease() {
 	builds, err := ListBuild()
 	if err != nil {
-		log.Fatal("获取构建记录失败, %v", err)
+		log.Fatal("获取构建记录失败", err)
 		return
 	}
 
 	images := loadConfig()
 
 	for _, build := range builds {
-		if build.Tag == build.ReleaseTag {
+		if build.Tag == build.ReleaseRef {
+			log.Printf("镜像 %s 的 ReleaseTag 为最新版本 %s，无需发布", build.Name, build.ReleaseRef)
 			continue
 		}
 
