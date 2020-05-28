@@ -15,25 +15,67 @@ import (
 	"strings"
 )
 
+/*
+是否需要推送镜像
+*/
+var push bool
+
+/*
+本次构建的版本号
+*/
+var buildNumber string
+
 func main() {
-	push := false
-	buildNumber := ""
-	flag.BoolVar(&push, "push", true, "开启镜像推送")
+	buildNumber = ""
+	push = false
+	flag.BoolVar(&push, "push", false, "开启镜像推送")
 	flag.StringVar(&buildNumber, "v", "", "设置构建版本号")
 	flag.Parse()
 
-	if buildNumber == "" {
-		fmt.Printf("dacker是一个用于构建包含依赖关系的Docker镜像.\n")
-		fmt.Printf("\nUsage: \n")
-		fmt.Printf("\tdacker [arguments] build\n\n")
-		fmt.Printf("The arguments are:\n\n")
-		flag.PrintDefaults()
+	len_args := len(os.Args)
+
+	if len_args == 1 {
+		fmt.Printf("Usage: dacker [arguments] command\n")
+		fmt.Printf("The arguments are:\n")
+		fmt.Printf("\t-push=bool\t是否推送镜像，默认false\n")
+		fmt.Printf("\t-v=string\t构建版本号\n")
+		fmt.Printf("\n")
+		fmt.Printf("The commands are:\n")
+		fmt.Printf("\tbuild\t构建镜像,需配合 -v 参数使用\n")
+		fmt.Printf("\trelease\t发布镜像\n")
+		fmt.Printf("\tlog\t查看镜像构建记录\n")
 		return
 	}
 
-	// 第一个参数为BuildNumber
-	// op := os.Args[1]
+	op := strings.ToLower(os.Args[len_args-1])
+	switch op {
+	case "build":
+		{
+			if buildNumber == "" {
+				fmt.Println("missing '-v buildNumber'")
+				return
+			}
+			doBuild()
+		}
+	case "release":
+		{
+			doRelease()
+		}
+	case "log":
+		{
+			doLog()
+		}
+	default:
+		{
+			fmt.Println("Unknown Command")
+		}
+	}
 
+}
+
+//
+// 构建
+func doBuild() {
 	log.Printf("本次构建版本号：%s", buildNumber)
 	// 从dacker.config中读取镜像配置及依赖关系
 	log.Printf("加载配置文件")
@@ -115,7 +157,7 @@ func main() {
 
 		// 执行 docker build 构建命令
 		log.Printf("开始构建镜像 => %s:%s", imageName, tag)
-		call("sudo", "docker", "build", "-f", newfilePath, "-t", imageName+":"+tag, dir)
+		invokeCmd("sudo", "docker", "build", "-f", newfilePath, "-t", imageName+":"+tag, dir)
 
 		// 删除临时生成的dockerfile文件
 		os.RemoveAll(newfilePath)
@@ -135,14 +177,76 @@ func main() {
 		} else {
 			log.Printf("已保存 %s 的构建结果", build.Name)
 			if push {
-				call("sudo", "docker", "push", imageName+":"+tag)
+				invokeCmd("sudo", "docker", "push", imageName+":"+tag)
 			}
 		}
 	}
-
 }
 
-func call(name string, arg ...string) {
+//
+// 发布
+func doRelease() {
+	builds, err := ListBuild()
+	if err != nil {
+		log.Fatal("获取构建记录失败, %v", err)
+		return
+	}
+
+	images := loadConfig()
+
+	for _, build := range builds {
+		if build.Tag == build.ReleaseTag {
+			continue
+		}
+
+		log.Printf("镜像 %s 的 ReleaseTag 为 %s，当前最新的 Tag 为 %s", build.Name, build.ReleaseRef, build.Tag)
+
+		// ReTag
+		image := build.Image
+		tag := build.Tag
+		releaseTag := images[build.Name].Release
+		log.Println(releaseTag)
+		lastBuildImage := image + ":" + tag
+		releaseImage := image + ":" + releaseTag
+
+		invokeCmd("sudo", "docker", "tag", lastBuildImage, releaseImage)
+		if push {
+			invokeCmd("sudo", "docker", "push", releaseImage)
+		}
+
+		build.ReleaseTag = releaseTag
+		build.ReleaseRef = tag
+		_, err = build.SaveBuild()
+		if err != nil {
+			log.Fatal("保存Release结果失败", err)
+		}
+	}
+}
+
+//
+// 查看构建记录
+func doLog() {
+	builds, err := ListBuild()
+	if err != nil {
+		log.Fatal("获取构建记录失败, %v", err)
+		return
+	}
+
+	for _, build := range builds {
+		fmt.Printf("Name: %s\n", build.Name)
+		fmt.Printf("BuildNumber: %s\n", build.BuildNumber)
+		fmt.Printf("Image: %s\n", build.Image)
+		fmt.Printf("BuildTag: %s\n", build.Tag)
+		fmt.Printf("ReleaseTag: %s\n", build.ReleaseTag)
+		fmt.Printf("ReleaseRef: %s\n", build.ReleaseRef)
+		fmt.Printf("=======================================\n")
+	}
+}
+
+//
+// 调用本地命令，并同步输出日志
+//
+func invokeCmd(name string, arg ...string) {
 	cmd := exec.Command(name, arg...)
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
@@ -172,7 +276,7 @@ func call(name string, arg ...string) {
 
 	err = cmd.Wait()
 	if err != nil {
-		log.Fatal("命令执行失败", err)
+		log.Fatal(err)
 		return
 	}
 }

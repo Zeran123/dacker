@@ -49,15 +49,15 @@
 2. 执行命令
 
 ```shell
-Usage:
-	dacker [arguments] build
-
+Usage: dacker [arguments] command
 The arguments are:
+	-push=bool	是否推送镜像，默认false
+	-v=string	构建版本号
 
-  -push
-    	开启镜像推送 (default true)
-  -v string
-    	设置构建版本号
+The commands are:
+	build	构建镜像,需配合 -v 参数使用
+	release	发布镜像
+	log	查看镜像构建记录
 ```
 
 > 参数说明

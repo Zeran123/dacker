@@ -10,6 +10,8 @@ type Buildlog struct {
 	Image       string
 	Tag         string
 	Deps        map[string]string
+	ReleaseTag  string
+	ReleaseRef  string
 	UpdatedAt   string
 }
 
