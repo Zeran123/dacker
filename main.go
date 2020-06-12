@@ -210,6 +210,7 @@ func doRelease() {
 		lastBuildImage := image + ":" + tag
 		releaseImage := image + ":" + releaseTag
 
+		invokeCmd("sudo", "docker", "pull", lastBuildImage)
 		invokeCmd("sudo", "docker", "tag", lastBuildImage, releaseImage)
 		if push {
 			invokeCmd("sudo", "docker", "push", releaseImage)
