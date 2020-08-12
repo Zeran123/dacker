@@ -159,3 +159,8 @@ The commands are:
 13.         docker build
 14.         更新构建版本和tag
 ```
+
+
+## LICENSE
+
+dacker is licensed under the MIT license.
